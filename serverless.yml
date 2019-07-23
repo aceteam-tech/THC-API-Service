@@ -68,177 +68,50 @@ functions:
       STAGE: ${self:provider.stage}
 
 resources:
-  Resources:
+  - ${file(cloudformation/apigateway/http-api.yml)}
+  - ${file(cloudformation/apigateway/authorizer.yml)}
 
-    ProfilesTable:
-      Type: 'AWS::DynamoDB::Table'
-      Properties:
-        TableName: HC-${self:provider.stage}-ProfilesTable
-        AttributeDefinitions:
-          - AttributeName: 'id'
-            AttributeType: 'S'
-          - AttributeName: 'email'
-            AttributeType: 'S'
-        KeySchema:
-          - AttributeName: 'id'
-            KeyType: 'HASH'
-        GlobalSecondaryIndexes:
-          - IndexName: 'gsi_email'
-            KeySchema:
-              - AttributeName: 'email'
-                KeyType: 'HASH'
-            Projection:
-              ProjectionType: 'ALL'
-        BillingMode: 'PAY_PER_REQUEST'
+  - ${file(cloudformation/cognito/user-pool.yml)}
+  - ${file(cloudformation/cognito/user-pool-client.yml)}
+  - ${file(cloudformation/cognito/invoke-lambda-permission.yml)}
+  - ${file(cloudformation/cognito/invoke-migration-lambda-permission.yml)}
 
-#   IAM
-    IAMLambdaRole:
-      Type: 'AWS::IAM::Role'
-      Properties:
-        AssumeRolePolicyDocument:
-          Version: '2012-10-17'
-          Statement:
-            -
-              Effect: 'Allow'
-              Principal:
-                Service:
-                  - 'lambda.amazonaws.com'
-              Action:
-                - 'sts:AssumeRole'
-        ManagedPolicyArns:
-          - 'arn:aws:iam::aws:policy/AWSLambdaFullAccess'
-        RoleName: HC_${self:provider.stage}_LambdaRole
+  - ${file(cloudformation/dynamodb/profiles-table.yml)}
 
-    IAMUserMigrationRole:
-      Type: 'AWS::IAM::Role'
-      Properties:
-        AssumeRolePolicyDocument:
-          Version: '2012-10-17'
-          Statement:
-            -
-              Effect: 'Allow'
-              Principal:
-                Service:
-                  - 'lambda.amazonaws.com'
-              Action:
-                - 'sts:AssumeRole'
-        ManagedPolicyArns:
-          - 'arn:aws:iam::aws:policy/AWSLambdaFullAccess'
-          - 'arn:aws:iam::aws:policy/AmazonCognitoPowerUser'
-        RoleName: HC_${self:provider.stage}_UserMigrationRole
+  - ${file(cloudformation/iam/lambda-role.yml)}
+  - ${file(cloudformation/iam/migration-role.yml)}
 
-#   API
-    HttpAPI:
-      Type: 'AWS::ApiGateway::RestApi'
-      Properties:
-        Name: HC-${self:provider.stage}-HttpAPI
-
-#   Cognito
-    UserPool:
-      Type: 'AWS::Cognito::UserPool'
-      Properties:
-        Policies:
-          PasswordPolicy:
-            MinimumLength: '8'
-            RequireLowercase: 'true'
-            RequireNumbers: 'true'
-            RequireSymbols: 'false'
-            RequireUppercase: 'true'
-        Schema:
-          - AttributeDataType: 'String'
-            Mutable: 'true'
-            Name: 'name'
-            Required: 'true'
-        UsernameAttributes:
-          - 'email'
-        AutoVerifiedAttributes:
-          - 'email'
-        UserPoolName: HC-${self:provider.stage}-UserPool
-        LambdaConfig:
-          PostConfirmation:
-            Fn::GetAtt:
-              - CreateProfileLambdaFunction
-              - Arn
-        UserPoolTags:
-          PROJECT: 'HealthCheck'
-
-    UserPoolLambdaInvokePermission:
-      Type: 'AWS::Lambda::Permission'
-      Properties:
-        Action: 'lambda:invokeFunction'
-        Principal: 'cognito-idp.amazonaws.com'
-        FunctionName: ${self:service}-${self:provider.stage}-createProfile
-        SourceArn:
-          Fn::GetAtt:
-            - UserPool
-            - Arn
-
-    UserPoolUserMigrationInvokePermission:
-      Type: 'AWS::Lambda::Permission'
-      Properties:
-        Action: 'lambda:invokeFunction'
-        Principal: 'cognito-idp.amazonaws.com'
-        FunctionName: ${self:service}-${self:provider.stage}-userMigration
-        SourceArn:
-          Fn::GetAtt:
-            - UserPool
-            - Arn
-
-    UserPoolClient:
-      Type: 'AWS::Cognito::UserPoolClient'
-      Properties:
-        ClientName: 'Mobile'
-        GenerateSecret: 'false'
-        ExplicitAuthFlows:
-          - 'USER_PASSWORD_AUTH'
-        UserPoolId:
-          Ref: UserPool
-
-    HTTPAuthorizer:
-      Type: 'AWS::ApiGateway::Authorizer'
-      Properties:
-        AuthorizerResultTtlInSeconds: '300'
-        IdentitySource: 'method.request.header.Authorization'
-        Name: 'HealthCheckCognito'
-        RestApiId:
+  - Outputs:
+      HttpAPIID:
+        Value:
           Ref: HttpAPI
-        Type: 'COGNITO_USER_POOLS'
-        ProviderARNs:
-          - Fn::GetAtt:
-            - UserPool
+        Export:
+          Name: HttpAPI-ID-${self:provider.stage}
+
+      HttpAPIRootResourceId:
+        Value:
+          Fn::GetAtt:
+            - HttpAPI
+            - RootResourceId
+        Export:
+          Name: HttpAPI-RootResourceId-${self:provider.stage}
+
+      HTTPAuthorizerID:
+        Value:
+          Ref: HTTPAuthorizer
+        Export:
+          Name: HTTPAuthorizer-ID-${self:provider.stage}
+
+      IAMLambdaRoleARN:
+        Value:
+          Fn::GetAtt:
+            - IAMLambdaRole
             - Arn
+        Export:
+          Name: IAMLambdaRole-ARN-${self:provider.stage}
 
-  Outputs:
-    HttpAPIID:
-      Value:
-        Ref: HttpAPI
-      Export:
-        Name: HttpAPI-ID-${self:provider.stage}
-
-    HttpAPIRootResourceId:
-      Value:
-        Fn::GetAtt:
-          - HttpAPI
-          - RootResourceId
-      Export:
-        Name: HttpAPI-RootResourceId-${self:provider.stage}
-
-    HTTPAuthorizerID:
-      Value:
-        Ref: HTTPAuthorizer
-      Export:
-        Name: HTTPAuthorizer-ID-${self:provider.stage}
-
-    IAMLambdaRoleARN:
-      Value:
-        Fn::GetAtt:
-          - IAMLambdaRole
-          - Arn
-      Export:
-        Name: IAMLambdaRole-ARN-${self:provider.stage}
-
-    UserPoolID:
-      Value:
-        Ref: UserPool
-      Export:
-        Name: UserPool-ID-${self:provider.stage}
+      UserPoolID:
+        Value:
+          Ref: UserPool
+        Export:
+          Name: UserPool-ID-${self:provider.stage}

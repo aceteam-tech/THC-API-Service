@@ -1,0 +1,11 @@
+Resources:
+  UserPoolUserMigrationInvokePermission:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: 'lambda:invokeFunction'
+      Principal: 'cognito-idp.amazonaws.com'
+      FunctionName: ${self:service}-${self:provider.stage}-userMigration
+      SourceArn:
+        Fn::GetAtt:
+          - UserPool
+          - Arn

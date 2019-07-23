@@ -1,0 +1,28 @@
+Resources:
+  UserPool:
+    Type: 'AWS::Cognito::UserPool'
+    Properties:
+      Policies:
+        PasswordPolicy:
+          MinimumLength: '8'
+          RequireLowercase: 'true'
+          RequireNumbers: 'true'
+          RequireSymbols: 'false'
+          RequireUppercase: 'true'
+      Schema:
+        - AttributeDataType: 'String'
+          Mutable: 'true'
+          Name: 'name'
+          Required: 'true'
+      UsernameAttributes:
+        - 'email'
+      AutoVerifiedAttributes:
+        - 'email'
+      UserPoolName: HC-${self:provider.stage}-UserPool
+      LambdaConfig:
+        PostConfirmation:
+          Fn::GetAtt:
+            - CreateProfileLambdaFunction
+            - Arn
+      UserPoolTags:
+        PROJECT: 'HealthCheck'

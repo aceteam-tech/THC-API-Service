@@ -1,0 +1,10 @@
+Resources:
+  UserPoolClient:
+    Type: 'AWS::Cognito::UserPoolClient'
+    Properties:
+      ClientName: 'Mobile'
+      GenerateSecret: 'false'
+      ExplicitAuthFlows:
+        - 'USER_PASSWORD_AUTH'
+      UserPoolId:
+        Ref: UserPool

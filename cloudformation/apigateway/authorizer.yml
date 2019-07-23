@@ -1,0 +1,14 @@
+Resources:
+  HTTPAuthorizer:
+    Type: 'AWS::ApiGateway::Authorizer'
+    Properties:
+      AuthorizerResultTtlInSeconds: '300'
+      IdentitySource: 'method.request.header.Authorization'
+      Name: 'HealthCheckCognito'
+      RestApiId:
+        Ref: HttpAPI
+      Type: 'COGNITO_USER_POOLS'
+      ProviderARNs:
+        - Fn::GetAtt:
+          - UserPool
+          - Arn

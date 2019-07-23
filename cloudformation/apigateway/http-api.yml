@@ -1,0 +1,5 @@
+Resources:
+  HttpAPI:
+    Type: 'AWS::ApiGateway::RestApi'
+    Properties:
+      Name: HC-${self:provider.stage}-HttpAPI
