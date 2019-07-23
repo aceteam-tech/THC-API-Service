@@ -1,0 +1,244 @@
+service: 'HC-APIService'
+frameworkVersion: ">=1.32.0 < 2.0.0"
+plugins:
+  - 'serverless-pseudo-parameters'
+  - 'serverless-plugin-optimize'
+  - 'serverless-webpack'
+
+custom:
+  profilesTableName: HC-${self:provider.stage}-ProfilesTable
+  roleId: !Ref IAMLambdaRole
+  slackNotifyUrl: ${ssm:slack-events-webhook}
+
+provider:
+  name: 'aws'
+  runtime: 'nodejs10.x'
+  region: ${opt:region, 'eu-west-2'}
+  memorySize: '128'
+  stage: ${opt:stage, 'dev'}
+
+package:
+  individually: 'true'
+  exclude:
+    - 'package.json'
+    - 'package-lock.json'
+
+functions:
+
+  createProfile:
+    handler: 'handlers/create-profile/create-profile.lambda'
+    description: 'Create user profile with id the same as Cognito UID'
+    role:
+      Fn::GetAtt:
+        - IAMLambdaRole
+        - Arn
+    environment:
+      FUNCTION: 'create-profile'
+      PROFILES_TABLE: ${self:custom.profilesTableName}
+      SLACK_NOTIFY_URL: ${self:custom.slackNotifyUrl}
+      REGION: ${self:provider.region}
+      STAGE: ${self:provider.stage}
+
+  userMigration:
+    handler: 'handlers/user-migration/user-migration.lambda'
+    description: 'TO DO'
+    role:
+      Fn::GetAtt:
+        - IAMUserMigrationRole
+        - Arn
+    environment:
+      FUNCTION: 'create-profile'
+      PROFILES_TABLE: ${self:custom.profilesTableName}
+      SLACK_NOTIFY_URL: ${self:custom.slackNotifyUrl}
+      REGION: ${self:provider.region}
+      STAGE: ${self:provider.stage}
+
+  migrateDynamo:
+    handler: 'handlers/migrate-dynamo/migrate-dynamo.lambda'
+    description: 'This lambda is migrating the previous dynamodb tables into the current stack'
+    timeout: 20
+    role:
+      Fn::GetAtt:
+        - IAMLambdaRole
+        - Arn
+    environment:
+      PROFILES_TABLE: ${self:custom.profilesTableName}
+      SLACK_NOTIFY_URL: ${self:custom.slackNotifyUrl}
+      REGION: ${self:provider.region}
+      STAGE: ${self:provider.stage}
+
+resources:
+  Resources:
+
+    ProfilesTable:
+      Type: 'AWS::DynamoDB::Table'
+      Properties:
+        TableName: HC-${self:provider.stage}-ProfilesTable
+        AttributeDefinitions:
+          - AttributeName: 'id'
+            AttributeType: 'S'
+          - AttributeName: 'email'
+            AttributeType: 'S'
+        KeySchema:
+          - AttributeName: 'id'
+            KeyType: 'HASH'
+        GlobalSecondaryIndexes:
+          - IndexName: 'gsi_email'
+            KeySchema:
+              - AttributeName: 'email'
+                KeyType: 'HASH'
+            Projection:
+              ProjectionType: 'ALL'
+        BillingMode: 'PAY_PER_REQUEST'
+
+#   IAM
+    IAMLambdaRole:
+      Type: 'AWS::IAM::Role'
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            -
+              Effect: 'Allow'
+              Principal:
+                Service:
+                  - 'lambda.amazonaws.com'
+              Action:
+                - 'sts:AssumeRole'
+        ManagedPolicyArns:
+          - 'arn:aws:iam::aws:policy/AWSLambdaFullAccess'
+        RoleName: HC_${self:provider.stage}_LambdaRole
+
+    IAMUserMigrationRole:
+      Type: 'AWS::IAM::Role'
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            -
+              Effect: 'Allow'
+              Principal:
+                Service:
+                  - 'lambda.amazonaws.com'
+              Action:
+                - 'sts:AssumeRole'
+        ManagedPolicyArns:
+          - 'arn:aws:iam::aws:policy/AWSLambdaFullAccess'
+          - 'arn:aws:iam::aws:policy/AmazonCognitoPowerUser'
+        RoleName: HC_${self:provider.stage}_UserMigrationRole
+
+#   API
+    HttpAPI:
+      Type: 'AWS::ApiGateway::RestApi'
+      Properties:
+        Name: HC-${self:provider.stage}-HttpAPI
+
+#   Cognito
+    UserPool:
+      Type: 'AWS::Cognito::UserPool'
+      Properties:
+        Policies:
+          PasswordPolicy:
+            MinimumLength: '8'
+            RequireLowercase: 'true'
+            RequireNumbers: 'true'
+            RequireSymbols: 'false'
+            RequireUppercase: 'true'
+        Schema:
+          - AttributeDataType: 'String'
+            Mutable: 'true'
+            Name: 'name'
+            Required: 'true'
+        UsernameAttributes:
+          - 'email'
+        AutoVerifiedAttributes:
+          - 'email'
+        UserPoolName: HC-${self:provider.stage}-UserPool
+        LambdaConfig:
+          PostConfirmation:
+            Fn::GetAtt:
+              - CreateProfileLambdaFunction
+              - Arn
+        UserPoolTags:
+          PROJECT: 'HealthCheck'
+
+    UserPoolLambdaInvokePermission:
+      Type: 'AWS::Lambda::Permission'
+      Properties:
+        Action: 'lambda:invokeFunction'
+        Principal: 'cognito-idp.amazonaws.com'
+        FunctionName: ${self:service}-${self:provider.stage}-createProfile
+        SourceArn:
+          Fn::GetAtt:
+            - UserPool
+            - Arn
+
+    UserPoolUserMigrationInvokePermission:
+      Type: 'AWS::Lambda::Permission'
+      Properties:
+        Action: 'lambda:invokeFunction'
+        Principal: 'cognito-idp.amazonaws.com'
+        FunctionName: ${self:service}-${self:provider.stage}-userMigration
+        SourceArn:
+          Fn::GetAtt:
+            - UserPool
+            - Arn
+
+    UserPoolClient:
+      Type: 'AWS::Cognito::UserPoolClient'
+      Properties:
+        ClientName: 'Mobile'
+        GenerateSecret: 'false'
+        ExplicitAuthFlows:
+          - 'USER_PASSWORD_AUTH'
+        UserPoolId:
+          Ref: UserPool
+
+    HTTPAuthorizer:
+      Type: 'AWS::ApiGateway::Authorizer'
+      Properties:
+        AuthorizerResultTtlInSeconds: '300'
+        IdentitySource: 'method.request.header.Authorization'
+        Name: 'HealthCheckCognito'
+        RestApiId:
+          Ref: HttpAPI
+        Type: 'COGNITO_USER_POOLS'
+        ProviderARNs:
+          - Fn::GetAtt:
+            - UserPool
+            - Arn
+
+  Outputs:
+    HttpAPIID:
+      Value:
+        Ref: HttpAPI
+      Export:
+        Name: HttpAPI-ID-${self:provider.stage}
+
+    HttpAPIRootResourceId:
+      Value:
+        Fn::GetAtt:
+          - HttpAPI
+          - RootResourceId
+      Export:
+        Name: HttpAPI-RootResourceId-${self:provider.stage}
+
+    HTTPAuthorizerID:
+      Value:
+        Ref: HTTPAuthorizer
+      Export:
+        Name: HTTPAuthorizer-ID-${self:provider.stage}
+
+    IAMLambdaRoleARN:
+      Value:
+        Fn::GetAtt:
+          - IAMLambdaRole
+          - Arn
+      Export:
+        Name: IAMLambdaRole-ARN-${self:provider.stage}
+
+    UserPoolID:
+      Value:
+        Ref: UserPool
+      Export:
+        Name: UserPool-ID-${self:provider.stage}
